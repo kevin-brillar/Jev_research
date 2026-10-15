@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "adk1-docs": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcpdoc",
+        "--with",
+        "mcp<2",
+        "mcpdoc",
+        "--urls",
+        "ADK1x:/home/kevin/.hermes/docs/adk1-llms.txt",
+        "--allowed-domains",
+        "https://raw.githubusercontent.com",
+        "--follow-redirects",
+        "--transport",
+        "stdio"
+      ]
+    },
+    "adk2-docs": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "mcpdoc",
+        "--with",
+        "mcp<2",
+        "mcpdoc",
+        "--urls",
+        "ADK2x:https://adk.dev/llms.txt",
+        "--follow-redirects",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}

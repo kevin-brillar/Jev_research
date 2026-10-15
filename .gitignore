@@ -1,0 +1,52 @@
+.env
+.env.*
+!.env.example
+.venv*/
+**/.adk/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+dist/
+build/
+*.egg-info/
+
+# Local tooling and editor state
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage, logs, and local runtime output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+*.log
+logs/
+tmp/
+temp/
+
+# Local databases and generated experiment data
+*.db
+*.sqlite
+*.sqlite3
+data/
+artifacts/
+outputs/
+
+# Local secrets and credentials
+*.pem
+*.key
+*.crt
+credentials*.json
+service-account*.json
+secrets*.json
+
+# Package/tool caches
+.ruff_cache/
+.mypy_cache/
+.basedpyright/
+.tox/
+.nox/

@@ -1,0 +1,29 @@
+# Question set used by the build-Jev workflow itself: Jev judging a draft
+# question set before a person accepts it.
+version: "1"
+
+lint:
+  min_instruction_words: 5
+  min_criteria_words: 4
+  require_ordered_levels: true
+
+sets:
+  builder_review:
+    description: Quality review of a draft question set against its requirements.
+    state_fields:
+      - builder.requirements
+      - builder.draft
+      - builder.lint_report
+      - builder.eval_report
+    questions:
+      draft_quality:
+        type: choice
+        instructions: "Given the requirements and the mechanical lint report, is this draft question set fit to put in front of a person for approval?"
+        criteria:
+          accept: "The draft covers every requirement, each question asks one judgment, and the lint report shows no unresolved defect."
+          revise: "The draft is close but has a fixable defect: a missing requirement, a compound question, or a criterion that does not describe a concrete situation."
+          reject: "The draft misreads the requirements, asks for something the model cannot judge, or would produce decisions no policy can threshold."
+      meets_requirements:
+        type: noul
+        instructions: "Does the draft contain a question for every judgment named in the requirements summary?"
+        criteria: "Coverage only; do not judge the quality of the wording here."

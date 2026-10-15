@@ -1,0 +1,52 @@
+# Instruction guidance blocks.
+#
+# These are the prompt-area tunables: blocks are selected per node from the
+# workflow spec (`guidance: [...]`) and appended to that node's instruction at
+# build time. Nothing here is referenced by name in Python logic, so changing
+# wording, adding a block, or moving a block to a different node is a config edit.
+#
+# Placeholders in {braces} are session-state keys resolved at run time (ADK
+# resolves them for LLM agents; function nodes resolve them explicitly), which is
+# how a Jev decision reaches the prompt without any routing code.
+version: "1"
+
+blocks:
+  decision_aware: |
+    A Jev decision is available for this request and you must respect it:
+    - recommended route: {jev_route}
+    - execution mode: {jev_execution_mode}
+    - route confidence: {jev_confidence}
+    - risk score (0-4): {jev_risk}
+    - human-review probability: {jev_human_probability}
+    - why: {jev_reasons}
+    Stay inside your own capability. If the decision is not `automatic`, treat the
+    request as pending review: explain what will happen next instead of acting.
+
+  no_unverified_action: |
+    Never tell the user that an external action succeeded, failed, or was
+    refunded unless the action record in your context shows a terminal status.
+    If the record is missing or still pending, say that it is pending.
+
+  cite_sources: |
+    Answer only from the passages returned by the retrieval tool in this turn and
+    cite the passage id for every factual claim. If the passages do not contain
+    the answer, say so plainly and route the request onward instead of guessing.
+
+  data_scope: |
+    Use only the records returned by your tools for this request. Do not infer
+    account details, balances, or entitlements from the conversation history.
+
+  handoff_quality: |
+    When handing a request to a person, produce a handoff summary containing:
+    what the customer asked, what you established, what is still unknown, the Jev
+    decision with its numbers, and the exact next action you recommend.
+
+  draft_review: |
+    You are reviewing a draft, not the customer. Judge it against the stated
+    requirements, list concrete defects, and prefer naming the defect over
+    rewriting the draft yourself.
+
+  builder_scope: |
+    Produce machine-consumable output only: valid JSON or YAML that a schema
+    check can reject. No prose outside the requested structure, no commentary,
+    no markdown fences.

@@ -1,0 +1,103 @@
+# Question sets for the customer-support workflow.
+#
+# A question set is data: the build-Jev workflow emits drafts of exactly this
+# shape, the linter checks them mechanically, and the policy engine thresholds
+# their answers. Nothing here is referenced by Python logic beyond the set name.
+version: "1"
+
+lint:
+  # file-level defaults; a set or a single question may override any of these
+  min_instruction_words: 5
+  min_criteria_words: 4
+  require_ordered_levels: true       # score levels must be written as a scale
+
+sets:
+  # ------------------------------------------------------------------ intake
+  intake:
+    description: First-pass triage of one inbound support request.
+    state_fields:
+      - request.text
+      - request.authenticated
+      - request.attachment_names
+    questions:
+      route:
+        type: choice
+        lint:
+          no_match_required: true       # a routing choice must say what happens to requests that fit nothing
+          no_match_options: [unsupported]
+        instructions: "Which single capability should handle this inbound support request first?"
+        criteria:
+          direct_response: "General conversation, or a simple question that needs no private data, no indexed documents and no account lookup."
+          knowledge: "A question about published policy, process, pricing or product documentation."
+          account: "A question about this specific customer's account, order, balance, entitlement or subscription."
+          document: "A request that can only be answered from a document the customer attached to this message."
+          action: "A request to change something on the customer's behalf, such as a refund, cancellation, update or an outbound message."
+          unsupported: "The request is out of scope, unintelligible, or asks for something we must not do."
+      risk:
+        type: score
+        instructions: "If this request were handled automatically and incorrectly, how much harm would it cause?"
+        criteria:
+          - "No meaningful harm: the reply is conversational and a wrong answer only means replying again."
+          - "Minor harm: a wrong answer wastes the customer's time but changes nothing on our side."
+          - "Moderate harm: private data could reach the wrong party, or a wrong statement becomes a record."
+          - "High harm: money moves, an order or account changes, or a legal or security obligation is triggered."
+          - "Severe harm: the effect cannot be undone, or it touches a regulated or safety-critical decision."
+      needs_human:
+        type: noul
+        instructions: "Ignoring the routing decision, does this request need a person to look at it before any system acts on it?"
+        criteria: "Judge from what the request asks for and what it would change, not from how it is worded."
+
+  # ----------------------------------------------------------- authorization
+  authorization:
+    description: Gate evaluated immediately before a mutating action.
+    state_fields:
+      - case.request_text
+      - case.pending_action.tool
+      - case.pending_action.arguments
+      - case.pending_action.mutating
+      - case.pending_action.limits
+    questions:
+      action_verdict:
+        type: choice
+        instructions: "Given the pending action record and the customer's own words, should this action proceed?"
+        criteria:
+          allow: "The record shows a specific, reversible action, it matches what the customer explicitly asked for, and it stays inside the stated limits."
+          review: "The action is plausible but something material is missing or ambiguous: the amount, the recipient, the authorisation, or the customer's intent."
+          deny: "The action contradicts the customer's request, exceeds the stated limits, or the record does not support it."
+      action_risk:
+        type: score
+        instructions: "If this pending action were executed incorrectly, how much harm would it cause?"
+        criteria:
+          - "No meaningful harm: nothing changes outside our own records."
+          - "Minor harm: the change is trivially reversible with no cost."
+          - "Moderate harm: the wrong party could see private data, or the change needs manual cleanup."
+          - "High harm: money moves incorrectly, or an account or order is changed in a way a person must undo."
+          - "Severe harm: the change is irreversible or reaches an external party we do not control."
+      evidence_present:
+        type: noul
+        instructions: "Does the pending action record contain the evidence needed to justify it, namely the customer's request, the amount, the recipient and an authorisation?"
+        criteria: "Judge only the record's completeness, not the merits of the action."
+
+  # ------------------------------------------------------------ verification
+  verification:
+    description: >
+      Independent check of a completed action against the action record. Runs on
+      the record only, so it cannot inherit the resolver's reasoning.
+    state_fields:
+      - case.action_record.tool
+      - case.action_record.arguments
+      - case.action_record.status
+      - case.action_record.external_confirmation
+      - case.action_record.response
+    questions:
+      outcome:
+        type: choice
+        instructions: "Does the action record support the claim that the action was carried out as requested?"
+        criteria:
+          supported: "The record shows the requested action with a terminal status, and the arguments match what the customer asked for."
+          contradicted: "The record shows the action failed, was rejected, used different arguments, or was never submitted."
+          insufficient: "The record is missing, pending, or does not contain enough detail to tell what happened."
+      side_effect_confirmed:
+        type: noul
+        instructions: "Does the action record contain confirmation from the external system that the side effect happened?"
+        criteria: "A submission acknowledgement is not confirmation; look for a terminal status or a provider reference."

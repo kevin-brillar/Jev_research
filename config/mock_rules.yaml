@@ -1,0 +1,63 @@
+# Deterministic decision provider used when JEV_MODE=mock.
+#
+# This is provider data, not provider logic: rules are ordered, first match wins,
+# and each rule yields the same answer shape a live Jev response produces
+# (choice + score + noul), so the policy engine and every node downstream behave
+# identically in both modes. Replace this file with real traffic when validating.
+version: "1"
+
+sets:
+  # ------------------------------------------------------------------ intake
+  intake:
+    # answer used when no rule matches
+    default: {choice: direct_response, confidence: 0.86, score: 0.2, noul: 0.05}
+    rules:
+      - when: {text_any: [refund, cancel, delete, "send payment", transfer, publish, unsubscribe]}
+        answer: {choice: action, confidence: 0.92, score: 3.4, noul: 0.91}
+      - when: {attachments: true}
+        answer: {choice: document, confidence: 0.92, score: 1.0, noul: 0.08}
+      - when: {text_any: [customer, balance, account, subscription, order, invoice]}
+        answer: {choice: account, confidence: 0.88, score: 1.8, noul: 0.18}
+      - when: {text_any: [policy, handbook, documentation, price, pricing, how do i]}
+        answer: {choice: knowledge, confidence: 0.91, score: 0.4, noul: 0.08}
+      - when: {text_any: ["ignore", "as an admin", "system prompt", "override your"]}
+        answer: {choice: unsupported, confidence: 0.55, score: 3.0, noul: 0.8}
+
+  # ----------------------------------------------------------- authorization
+  authorization:
+    default: {choice: review, confidence: 0.60, score: 2.0, noul: 0.5}
+    rules:
+      - when: {state: {"case.pending_action.within_limits": false}}
+        answer: {choice: deny, confidence: 0.94, score: 3.6, noul: 0.95}
+      - when: {state: {"case.pending_action.matches_request": false}}
+        answer: {choice: deny, confidence: 0.90, score: 3.2, noul: 0.90}
+      - when: {state: {"case.pending_action.within_limits": true, "case.pending_action.matches_request": true}}
+        answer: {choice: allow, confidence: 0.93, score: 1.6, noul: 0.12}
+      - when: {state: {"case.pending_action.mutating": true}}
+        answer: {choice: review, confidence: 0.58, score: 2.4, noul: 0.62}
+      - when: {always: true}
+        answer: {choice: allow, confidence: 0.88, score: 0.8, noul: 0.10}
+
+  # ------------------------------------------------------------ verification
+  verification:
+    default: {choice: insufficient, confidence: 0.62, score: 2.0, noul: 0.5}
+    rules:
+      - when: {state: {"case.action_record.status": "completed", "case.action_record.external_confirmation": true}}
+        answer: {choice: supported, confidence: 0.95, score: 0.6, noul: 0.05}
+      - when: {state: {"case.action_record.status": "completed"}}
+        answer: {choice: insufficient, confidence: 0.72, score: 1.6, noul: 0.45}
+      - when: {state: {"case.action_record.status": "failed"}}
+        answer: {choice: contradicted, confidence: 0.93, score: 2.4, noul: 0.9}
+      - when: {state: {"case.action_record.status": "pending"}}
+        answer: {choice: insufficient, confidence: 0.66, score: 1.4, noul: 0.5}
+
+  # ---------------------------------------------------------- builder review
+  builder_review:
+    default: {choice: revise, confidence: 0.64, score: 1.0, noul: 0.4}
+    rules:
+      - when: {state: {"builder.lint_report.ok": false}}
+        answer: {choice: revise, confidence: 0.83, score: 1.2, noul: 0.6}
+      - when: {state: {"builder.eval_report.agreement": 1.0, "builder.lint_report.ok": true}}
+        answer: {choice: accept, confidence: 0.87, score: 0.4, noul: 0.1}
+      - when: {state: {"builder.eval_report.agreement": 0.0}}
+        answer: {choice: reject, confidence: 0.80, score: 1.8, noul: 0.8}

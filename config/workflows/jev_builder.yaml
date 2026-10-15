@@ -1,0 +1,157 @@
+# "Build Jev with agents" workflow.
+#
+# This is the automation story the TypeSafe skill points at: agents draft a
+# question set, deterministic code lints it, Jev judges the draft, generated cases
+# measure it in shadow mode, and a person accepts the result. Nodes that must be
+# trustworthy (lint, shadow eval) are functions; nodes that need language
+# (requirements, drafting, repair, reporting) are LLMs; the go/no-go on a draft is
+# a Jev judgment with thresholds from config/policy.yaml.
+#
+# Nothing here duplicates the customer-support workflow's internals: both are the
+# same spec format compiled by the same compiler.
+version: "1"
+id: jev_builder
+name: Build a Jev question set and its policy from requirements
+description: >
+  Requirements -> draft question set -> mechanical lint -> Jev review -> generated
+  cases -> shadow evaluation -> threshold proposal -> human acceptance.
+default_model: gemini-2.5-flash
+
+state:
+  builder:
+    attempts: 0
+    max_attempts: 3
+    min_agreement: 1.0
+
+nodes:
+  - id: brief
+    type: function
+    name: Builder start
+    function: builder_start
+    description: Normalize the business description and sample traffic, reset counters.
+  - id: requirements
+    type: llm
+    name: Requirements agent
+    instruction: >
+      Read the business description and the sample traffic. Emit strict JSON with
+      the keys judgments (one entry per judgment the system needs, each with name,
+      question, and kind), escalation_rules (when a person must look at it), and
+      state (the fields each judgment needs to see). Do not design questions yet.
+    guidance: [builder_scope]
+    output_key: builder.requirements
+  - id: design
+    type: llm
+    name: Question-set designer
+    instruction: >
+      Using the requirements, emit one draft question set as strict JSON with the
+      keys set, state_fields and questions. Each question is exactly one judgment
+      with type choice, score or noul, a self-contained instruction, and criteria
+      written as concrete situations rather than adjectives. A choice needs an
+      outcome for requests that fit nothing.
+    guidance: [builder_scope]
+    output_key: builder.draft
+  - id: lint
+    type: function
+    name: Deterministic lint
+    function: lint_draft
+    description: >
+      Schema and guidance checks only. Increments the attempt counter and routes
+      back to repair while attempts remain, otherwise out of the loop.
+    routes:
+      valid: judge
+      invalid: repair
+      exhausted: reject
+    default_route: reject
+  - id: repair
+    type: llm
+    name: Draft repair agent
+    instruction: >
+      Fix the draft using the lint report exactly as given. Change only what the
+      report complains about, emit the whole set again as strict JSON, and do not
+      comment on the report.
+    guidance: [builder_scope, draft_review]
+    output_key: builder.draft
+  - id: judge
+    type: jev
+    name: Jev review of the draft
+    question_set: builder_review
+    policy: builder_review
+    state_scope: [builder.requirements, builder.draft, builder.lint_report]
+    routes:
+      accept: cases
+      revise: repair
+      reject: reject
+    default_route: revise
+  - id: cases
+    type: llm
+    name: Case generator
+    instruction: >
+      Write labelled evaluation cases as strict JSON with a cases array. Each case
+      has id, text, the expected route or level, and the harm level a person would
+      assign. Cover the boring middle as well as the edge cases, and include cases
+      the draft should refuse.
+    guidance: [builder_scope]
+    output_key: builder.cases
+  - id: evaluate
+    type: function
+    name: Shadow evaluation
+    function: shadow_evaluate
+    description: >
+      Run the draft set against the generated cases with the deterministic
+      provider, and report agreement, escalation rate and coverage.
+    routes:
+      pass: tune
+      fail: repair
+    default_route: fail
+  - id: tune
+    type: llm
+    name: Threshold advisor
+    instruction: >
+      From the evaluation report, propose policy thresholds as strict JSON with the
+      keys thresholds and note. Justify each number against the observed agreement
+      and the cost of a wrong automatic decision. Never propose a threshold that
+      lets a side-effect route run unreviewed.
+    guidance: [builder_scope]
+    output_key: builder.thresholds
+  - id: accept
+    type: human
+    name: Human acceptance
+    message: >
+      Review the draft question set, the lint and evaluation reports, and the
+      proposed thresholds. Approve to adopt them, or reject to send the draft back
+      with your notes.
+    routes:
+      approved: report
+      rejected: repair
+    default_route: rejected
+    timeout_seconds: 900
+  - id: report
+    type: llm
+    name: Adopted-spec summary
+    instruction: >
+      Summarise what was adopted: the question set, the thresholds, the measured
+      agreement, and what remains unmeasured. State plainly that the thresholds are
+      untested outside the generated cases.
+    guidance: [builder_scope]
+    output_key: builder.report
+  - id: reject
+    type: llm
+    name: Rejection note
+    instruction: >
+      Explain why the draft was rejected and what the requirements must change
+      before another attempt is worth making.
+    guidance: [draft_review]
+    output_key: builder.rejection
+  - id: finish
+    type: termination
+    name: Done
+
+edges:
+  - {from: brief, to: requirements}
+  - {from: requirements, to: design}
+  - {from: design, to: lint}
+  - {from: repair, to: lint}
+  - {from: cases, to: evaluate}
+  - {from: tune, to: accept}
+  - {from: report, to: finish}
+  - {from: reject, to: finish}

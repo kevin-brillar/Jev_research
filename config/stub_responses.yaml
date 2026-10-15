@@ -1,0 +1,38 @@
+# Canned model output for offline runs (model: stub).
+#
+# A test double, selected by the spec's `default_model: stub`, keyed by node id.
+# It exists so both runtimes can be exercised end to end without network access;
+# nothing in backend/ contains prompt text or expected answers.
+version: "1"
+default: {text: "Understood."}
+
+nodes:
+  # ------------------------------------------------- customer support: replies
+  responder:
+    text: "Here is a short answer to the question you asked. No private data or account records were needed."
+  knowledge_agent:
+    text: "Our published policy covers this: refunds are available within 30 days of purchase (passage policy-1.3). Outside that window an exception must be approved by a person."
+  account_agent:
+    text: "I checked the account record for this customer. The subscription is active and the last invoice is settled. No changes were made."
+  document_agent:
+    text: "I read the attached document and extracted the requested values. The total on page one is 1,240.00 and the reference is INV-2291."
+  resolver:
+    text: "{\"tool\": \"refund_payment\", \"arguments\": {\"amount\": 120.0, \"reason\": \"duplicate charge\"}, \"rationale\": \"The customer reports a duplicate charge and the account record shows two identical charges on the same day.\"}"
+  escalate:
+    text: "Handoff summary: the customer asked for a refund of a duplicate charge. Jev routed this as an action with risk 3.4 and human-review probability 0.91. Pending: nobody has executed the refund. Next action: a person should confirm the duplicate charge and approve the refund."
+
+  # ----------------------------------------------------- jev builder: drafts
+  requirements:
+    text: "{\"judgments\": [{\"name\": \"intent\", \"question\": \"which capability should handle the request\", \"kind\": \"choice\"}, {\"name\": \"harm\", \"question\": \"how much harm an incorrect automatic answer would cause\", \"kind\": \"score\"}], \"escalation_rules\": [\"escalate when the route is uncertain\", \"always escalate side-effect requests\"], \"state\": [\"request.text\", \"request.authenticated\"]}"
+  design:
+    text: "{\"set\": \"support_triage\", \"state_fields\": [\"request.text\", \"request.authenticated\"], \"questions\": {\"intent\": {\"type\": \"choice\", \"instructions\": \"Which capability should handle this support request?\", \"criteria\": {\"knowledge\": \"A question about published policy or documentation.\", \"account\": \"A question about this customer's own account or order.\", \"unsupported\": \"The request is out of scope or cannot be judged from the request text.\"}}, \"harm\": {\"type\": \"score\", \"instructions\": \"How much harm would an incorrect automatic answer cause?\", \"criteria\": [\"No meaningful harm: a wrong reply only means replying again.\", \"Moderate harm: private data reaches the wrong party or a wrong statement becomes a record.\", \"Severe harm: money moves or the effect cannot be undone.\"]}}}"
+  repair:
+    text: "{\"set\": \"support_triage\", \"state_fields\": [\"request.text\", \"request.authenticated\"], \"questions\": {\"intent\": {\"type\": \"choice\", \"instructions\": \"Which capability should handle this support request?\", \"criteria\": {\"knowledge\": \"A question about published policy, process or documentation.\", \"account\": \"A question about this customer's own account, order or balance.\", \"unsupported\": \"The request is out of scope, unintelligible, or asks for something we must not do.\"}}, \"harm\": {\"type\": \"score\", \"instructions\": \"How much harm would an incorrect automatic answer cause?\", \"criteria\": [\"No meaningful harm: a wrong reply is conversational and only means replying again.\", \"Moderate harm: private data could reach the wrong party, or a wrong statement becomes a record.\", \"Severe harm: money moves, or the effect cannot be undone by a person.\"]}}}"
+  cases:
+    text: "{\"cases\": [{\"id\": \"c1\", \"text\": \"How long is the refund window?\", \"expected\": \"knowledge\", \"harm\": 0}, {\"id\": \"c2\", \"text\": \"What is my current balance?\", \"expected\": \"account\", \"harm\": 1}, {\"id\": \"c3\", \"text\": \"Refund me for a duplicate charge.\", \"expected\": \"unsupported\", \"harm\": 3}]}"
+  tune:
+    text: "{\"thresholds\": {\"intent\": {\"min_confidence\": 0.65}, \"harm\": {\"max_risk\": 2.0}}, \"note\": \"Raise the intent floor until the escalation rate matches the sample agreement target.\"}"
+  report:
+    text: "Draft question set support_triage passes the mechanical lint, agreement on the generated cases is 1.0, and the proposed thresholds are intent confidence 0.65 with harm capped at 2.0. Ready for the next review cycle."
+  reject:
+    text: "Rejected: the draft asks for arithmetic that the decision model cannot do reliably. Rework the requirements so the numbers arrive in state and Jev only judges their acceptability."

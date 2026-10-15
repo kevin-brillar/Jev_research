@@ -1,0 +1,108 @@
+# Jev policy: every threshold lives here, never in Python.
+#
+# Policy is keyed by *question set*, so the same engine gates intake triage,
+# action authorization and resolution verification without new code. Adding a
+# route or tightening a threshold is a config change; adding a whole new
+# decision surface is a new block here plus a question set.
+version: "1"
+
+# What happens when Jev cannot be consulted (provider error, incomplete answer,
+# unparseable response). Deliberately fail-closed, unlike the guardrail path.
+on_error: human_review
+
+# Two rule grammars, both applied to every route:
+#   named routes  -> per-route row
+#   anything else -> `defaults` row (also used for routes not listed here)
+defaults:
+  min_confidence: 0.70
+  max_risk: 2.5
+  max_human_probability: 0.70
+  unknown_route: human_review
+
+sets:
+  # ---------------------------------------------------------------- intake
+  intake:
+    description: >
+      First-pass triage of an inbound support request. Escalation is decided by
+      code from the numbers Jev returns; the model never decides policy.
+    routes:
+      direct_response:
+        min_confidence: 0.60
+        max_risk: 2.0
+        max_human_probability: 0.50
+      knowledge:
+        min_confidence: 0.60
+        max_risk: 2.0
+        max_human_probability: 0.50
+      account:
+        min_confidence: 0.65
+        max_risk: 2.0
+        max_human_probability: 0.50
+      document:
+        min_confidence: 0.65
+        max_risk: 1.5
+        max_human_probability: 0.50
+      # Side-effect route: never taken without the authorization set agreeing.
+      action:
+        min_confidence: 0.80
+        max_risk: 2.0
+        max_human_probability: 0.30
+        requires_gate: authorization   # documentation for the analyst: this route must pass that gate
+      unsupported:
+        always_human: true
+    reason_template: "intake {verdict}"
+
+  # --------------------------------------------------------- authorization
+  authorization:
+    description: >
+      Second gate, evaluated immediately before a mutating action. Reads the
+      pending action record, not the whole conversation.
+    routes:
+      allow:
+        min_confidence: 0.85
+        max_risk: 1.5
+        max_human_probability: 0.20
+      review:
+        always_human: true
+      deny:
+        always_human: true
+    defaults:
+      min_confidence: 0.90
+      max_risk: 1.0
+      max_human_probability: 0.10
+      unknown_route: review
+
+  # ------------------------------------------------------------ verification
+  verification:
+    description: >
+      Independent check of a completed action against its evidence. Runs on the
+      action record only (see the node's state_scope), so it cannot inherit the
+      resolver's reasoning.
+    routes:
+      supported:
+        min_confidence: 0.70
+        max_risk: 4.0
+        max_human_probability: 1.0
+      contradicted:
+        always_human: true
+      insufficient:
+        always_human: true
+    defaults:
+      min_confidence: 0.70
+      max_risk: 4.0
+      max_human_probability: 1.0
+      unknown_route: insufficient
+
+  # -------------------------------------------------------- builder review
+  # The workflow-builds-Jev workflow judges its own draft question set with Jev.
+  builder_review:
+    description: Draft question-set quality review before a human accepts it.
+    routes:
+      accept: {min_confidence: 0.70, max_risk: 4.0, max_human_probability: 1.0}
+      revise: {always_human: false}
+      reject: {always_human: true}
+    defaults:
+      min_confidence: 0.75
+      max_risk: 4.0
+      max_human_probability: 1.0
+      unknown_route: revise

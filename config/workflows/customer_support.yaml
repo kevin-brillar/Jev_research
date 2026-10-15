@@ -1,0 +1,183 @@
+# Customer-support workflow: one spec, compiled to ADK 1.31 and ADK 2.8.
+#
+# Shape follows the canvas specs that the Atenxion dashboard compiles
+# (version/id/nodes/edges, node types, router conditions), extended with the node
+# types this experiment needs:
+#   function  - deterministic code (state in, state out), never an LLM
+#   llm       - an agent; its instruction lives here, guidance blocks are appended from config
+#   jev       - a Jev decision gate: typed questions, thresholds from config/policy.yaml
+#   human     - a pause for a person (RequestInput on ADK 2)
+#   router    - deterministic condition routing over state
+#   termination
+#
+# All prompt text is in this file or in config/guidance.yaml. No prompt, threshold
+# or route mapping is written in Python.
+version: "1"
+id: customer_support
+name: Atenxion customer support with Jev gates
+description: >
+  Triage once with Jev, answer inside the chosen capability, gate every mutating
+  action twice (authorization, then independent verification), and hand off to a
+  person whenever the numbers say so.
+default_model: gemini-2.5-flash
+
+state:
+  request: {}
+  case: {}
+  approvals: {}
+  jev_history: []
+
+nodes:
+  # ---------------------------------------------------------------- intake
+  - id: intake
+    type: function
+    name: Intake normalization
+    function: intake_normalize
+    description: Turn the inbound message into the canonical request record.
+
+  # ------------------------------------------------------------ Jev triage
+  - id: triage
+    type: jev
+    name: Jev triage
+    question_set: intake
+    policy: intake
+    routes:
+      direct_response: responder
+      knowledge: knowledge_agent
+      account: account_agent
+      document: document_agent
+      action: resolver
+      unsupported: escalate
+    default_route: escalate
+    description: >
+      The runtime cannot skip this node: its route key selects the branch, and an
+      unmatched route falls through to the declared default.
+
+  # ------------------------------------------------------------- responders
+  - id: responder
+    type: llm
+    name: Direct responder
+    instruction: >
+      Answer the customer's question in two or three sentences. You have no
+      private data and no tools; if the question needs either, say what you would
+      need instead of guessing.
+    guidance: [decision_aware]
+    output_key: case.reply
+  - id: knowledge_agent
+    type: llm
+    name: Knowledge agent
+    instruction: >
+      Answer from published documentation. Search first, answer only from the
+      passages you receive, and cite the passage id next to each claim.
+    tools: [knowledge_search]
+    guidance: [decision_aware, cite_sources]
+    output_key: case.reply
+  - id: account_agent
+    type: llm
+    name: Account agent
+    instruction: >
+      Answer questions about this customer's own account, order or subscription
+      using the account tool. Never change anything.
+    tools: [account_lookup]
+    guidance: [decision_aware, data_scope]
+    output_key: case.reply
+  - id: document_agent
+    type: llm
+    name: Document agent
+    instruction: >
+      Answer using only the content of the document attached to this request.
+      Name the page or section each value came from.
+    tools: [document_extract]
+    guidance: [decision_aware]
+    output_key: case.reply
+
+  # ---------------------------------------------------------------- action
+  - id: resolver
+    type: llm
+    name: Resolution agent
+    instruction: >
+      Decide what should change for this customer and emit the pending action as
+      strict JSON with the keys tool, arguments and rationale. Use only the tools
+      offered to you. Do not perform the action and do not tell the customer it
+      has happened.
+    tools: [account_lookup, refund_payment, create_ticket]
+    guidance: [decision_aware, no_unverified_action]
+    output_key: case.proposed_action
+  - id: prepare_action
+    type: function
+    name: Action preparation
+    function: prepare_action
+    description: >
+      Validate the proposed action against the tool's declared limits and record
+      it as the pending action. Deterministic policy lives here, not in the prompt.
+  - id: authorization
+    type: jev
+    name: Jev authorization gate
+    question_set: authorization
+    policy: authorization
+    state_scope: [case.request_text, case.pending_action]
+    routes:
+      allow: execute_action
+      review: human_approval
+      deny: escalate
+    default_route: human_approval
+    description: Second Jev gate, evaluated on the pending action record only.
+  - id: human_approval
+    type: human
+    name: Reviewer approval
+    message: >
+      Jev flagged this action for review. Approve refund_payment for the pending
+      amount, or reject it and route the case to a person.
+    routes:
+      approved: execute_action
+      rejected: escalate
+    default_route: escalate
+    timeout_seconds: 300
+  - id: execute_action
+    type: function
+    name: Action executor
+    function: execute_action
+    description: >
+      Perform the single approved action with an idempotency key and write the
+      action record the verifier reads.
+
+  # ---------------------------------------------------------- verification
+  - id: verify
+    type: jev
+    name: Independent resolution verifier
+    question_set: verification
+    policy: verification
+    state_scope: [case.action_record]
+    routes:
+      supported: finish
+      contradicted: escalate
+      insufficient: escalate
+    default_route: escalate
+    description: >
+      Sees the action record only, never the resolver's reasoning, so it cannot
+      inherit a wrong assumption from the branch that produced it.
+
+  - id: escalate
+    type: llm
+    name: Escalation agent
+    instruction: >
+      Write a handoff for the person picking this up. Say what the customer asked
+      for, what was established, what is unknown, the Jev decision with its
+      numbers, and the next action you recommend. Do not claim any action was
+      completed.
+    guidance: [decision_aware, handoff_quality]
+    output_key: case.handoff
+  - id: finish
+    type: termination
+    name: Done
+
+edges:
+  - {from: intake, to: triage}
+  - {from: responder, to: finish}
+  - {from: knowledge_agent, to: finish}
+  - {from: account_agent, to: finish}
+  - {from: document_agent, to: finish}
+  - {from: resolver, to: prepare_action}
+  - {from: prepare_action, to: authorization}
+  - {from: execute_action, to: verify}
+  - {from: escalate, to: finish}
